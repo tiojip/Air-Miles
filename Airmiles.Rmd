@@ -1,0 +1,368 @@
+---
+title: "Airmiles"
+output: pdf_document
+date: "2025-02-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+# Charger le package data.table
+install.packages("data.table")
+library(data.table)
+
+```
+
+```{r}
+# Charger les fichiers CSV en Data Tables
+dt_members_extracted <- fread("df_members_extracted.csv")
+dt_reward_extracted  <- fread("df_reward_extracted.csv")
+dt_transaction_extracted <- fread("df_transaction_extracted.csv")
+```
+
+```{r}
+# Définir la clé pour chaque table sur la colonne MEMBER_ID
+setkey(dt_members_extracted, MEMBER_ID)
+setkey(dt_reward_extracted, MEMBER_ID)
+setkey(dt_transaction_extracted, MEMBER_ID)
+
+# Réaliser la jointure interne entre dt_transaction_extracted et dt_members_extracted
+dt_merged <- merge(dt_transaction_extracted, dt_members_extracted, by = "MEMBER_ID", all = FALSE, allow.cartesian = TRUE)
+
+# Joindre ensuite avec dt_reward_extracted
+dt_merged <- merge(dt_merged, dt_reward_extracted, by = "MEMBER_ID", all = FALSE, allow.cartesian = TRUE)
+
+# Afficher un aperçu de la table fusionnée
+head(dt_merged)
+
+```
+
+```{r}
+dt_merged <- fread("dt_merged.csv")
+```
+
+```{r}
+# Afficher un aperçu de la table fusionnée
+head(dt_merged)
+
+```
+
+```{r}
+# Installer le package dplyr (à faire une seule fois)
+install.packages("dplyr")
+
+# Charger le package
+library(dplyr)
+
+```
+
+
+```{r}
+dt_merged <- dt_merged %>%
+  mutate(IS_SPENDING = ifelse(AMOUNT_SPENT > 0, 1, 0)) %>%
+  group_by(MEMBER_ID) %>%
+  mutate(AVG_SPENDING_VALUE = ifelse(IS_SPENDING == 1 & TRANSACTIONS > 0, AMOUNT_SPENT / TRANSACTIONS, 0)) %>%
+  ungroup()
+
+```
+
+
+```{r}
+dt_merged <- dt_merged %>%
+  mutate(IS_SPENDING = ifelse(AMOUNT_SPENT > 0, 1, 0)) %>%
+  group_by(MEMBER_ID) %>%
+  mutate(AVG_SPENDING_VALUE = ifelse(IS_SPENDING == 1, AMOUNT_SPENT / TRANSACTIONS, NA)) %>%
+  ungroup()
+
+```
+
+
+```{r}
+# Ajouter un ratio de rédemption des points spécifique à chaque catégorie de récompense
+dt_merged <- dt_merged %>%
+  group_by(MEMBER_ID, REWARDS_CATEGORY) %>%  # Segmentation par catégorie
+  mutate(REDEMPTION_RATIO_CATEGORY = ifelse(TRANSACTIONS > 0, 
+                                            (REDEMPTIONS / TRANSACTIONS) * 100, 0)) %>%
+  ungroup()
+
+```
+
+```{r}
+
+# Création des nouvelles variables dans dt_merged
+dt_merged <- dt_merged %>%
+  
+  
+  # Pourcentage de points bonus gagnés par rapport aux points de base
+  mutate(PERCENTAGE_BONUS_POINTS = ifelse(BASE_POINTS_EARNED > 0, 
+                                          (BONUS_POINTS_EARNED / BASE_POINTS_EARNED) * 100, 0)) %>%
+  
+  # Pourcentage des points récompenses utilisés par rapport au solde de points disponibles
+  mutate(PERCENTAGE_REWARD_POINTS_USED = ifelse(REWARD_POINTS_BALANCE > 0, 
+                                                (POINTS_REDEEMED / REWARD_POINTS_BALANCE) * 100, 0)) %>%
+  
+  # Ratio d'utilisation du cashback
+  mutate(CASH_BACK_USAGE_RATIO = ifelse(CASH_BACK_POINTS_BALANCE > 0, 
+                                        (CASH_BACK_POINTS_EARNED / CASH_BACK_POINTS_BALANCE) * 100, 0))
+  
+
+
+```
+
+```{r}
+
+dt_merged <- dt_merged %>%
+  group_by(MEMBER_ID, RETAILER) %>%
+  mutate(PERCENTAGE_SPENT_PER_RETAILER = ifelse(is.na(TOTAL_SPENT_PER_RETAILER), 0, 
+                                                (TOTAL_SPENT_PER_RETAILER / sum(TOTAL_SPENT_PER_RETAILER, na.rm = TRUE)) * 100)) %>%
+  ungroup()
+
+```
+
+```{r}
+dt_merged <- dt_merged %>%
+  group_by(MEMBER_ID, RETAILER) %>%
+  mutate(PERCENTAGE_SPENT_PER_RETAILER = ifelse(sum(TOTAL_SPENT_PER_RETAILER, na.rm = TRUE) == 0, 
+                                                0,  # Met 0 au lieu de NA
+                                                (TOTAL_SPENT_PER_RETAILER / sum(TOTAL_SPENT_PER_RETAILER, na.rm = TRUE)) * 100)) %>%
+  ungroup()
+
+```
+
+
+```{r}
+# Création des nouvelles variables par détaillant
+dt_merged <- dt_merged %>%
+  
+  # Montant total dépensé par membre et détaillant
+  group_by(MEMBER_ID, RETAILER) %>%
+  mutate(TOTAL_SPENT_PER_RETAILER = sum(AMOUNT_SPENT, na.rm = TRUE)) %>%
+  
+  # Nombre de transactions par détaillant
+  mutate(TRANSACTION_COUNT_PER_RETAILER = n()) %>%
+  
+  # Valeur moyenne par transaction chez un détaillant
+  mutate(AVG_TRANSACTION_VALUE_PER_RETAILER = TOTAL_SPENT_PER_RETAILER / TRANSACTION_COUNT_PER_RETAILER) %>%
+  
+  # Ratio des rédemptions des points par détaillant
+  mutate(REDEMPTION_RATIO_PER_RETAILER = ifelse(TRANSACTION_COUNT_PER_RETAILER > 0, 
+                                                (REDEMPTIONS / TRANSACTION_COUNT_PER_RETAILER) * 100, 0)) %>%
+  
+  ungroup()
+```
+
+```{r}
+dt_merged <- dt_merged %>%
+  mutate(PERCENTAGE_SPENT_PER_RETAILER = ifelse(is.na(PERCENTAGE_SPENT_PER_RETAILER) & TRANSACTIONS > 0, 
+                                                0, PERCENTAGE_SPENT_PER_RETAILER))
+
+
+```
+
+```{r}
+dt_merged %>%
+  group_by(MEMBER_ID) %>%
+  summarise(total_spent = sum(TOTAL_SPENT_PER_RETAILER, na.rm = TRUE)) %>%
+  filter(total_spent == 0)  # Voir combien de clients ont une somme totale de dépenses = 0
+
+```
+
+
+```{r}
+
+# Compter les valeurs manquantes par variable
+missing_values <- dt_merged %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  t() %>%
+  as.data.frame()
+
+# Renommer les colonnes
+colnames(missing_values) <- c("Nombre_Valeurs_Manquantes")
+
+# Ajouter une colonne avec le pourcentage de valeurs manquantes
+missing_values$Pourcentage <- (missing_values$Nombre_Valeurs_Manquantes / nrow(dt_merged)) * 100
+
+# Trier par nombre de valeurs manquantes (descendant)
+missing_values <- missing_values %>%
+  arrange(desc(Nombre_Valeurs_Manquantes))
+
+# Afficher les résultats
+print(missing_values)
+
+```
+
+
+```{r}
+
+# Remplacer les valeurs NA par 0
+dt_merged <- dt_merged %>%
+  mutate(PERCENTAGE_SPENT_PER_RETAILER = ifelse(is.na(PERCENTAGE_SPENT_PER_RETAILER), 0, PERCENTAGE_SPENT_PER_RETAILER))
+
+```
+
+```{r}
+class(dt_merged$RETAILER)  # Vérifie si c'est un facteur ou un caractère
+
+```
+```{r}
+unique(dt_merged$RETAILER)
+
+```
+```{r}
+# Nombre de classes uniques par variable
+length(unique(dt_merged$RETAILER))  # Nombre de détaillants uniques
+length(unique(dt_merged$REWARDS_CATEGORY))  # Nombre de catégories de récompenses uniques
+
+```
+```{r}
+install.packages("caret", dependencies = TRUE)
+
+```
+
+
+```{r}
+# Charger les packages nécessaires
+library(caret)
+library(dplyr)
+
+```
+
+```{r}
+
+# Sélectionner les variables pertinentes (exclure MEMBER_ID pour l’ACP)
+dt_pca <- dt_merged %>%
+  select(-MEMBER_ID)
+
+```
+
+```{r}
+
+# Appliquer le One-Hot Encoding sur RETAILER et REWARDS_CATEGORY
+one_hot <- dummyVars("~ RETAILER + REWARDS_CATEGORY", data = dt_pca)  
+
+```
+
+```{r}
+
+# Convertir en dataframe après encodage
+dt_pca_encoded <- predict(one_hot, dt_pca) %>% as.data.frame()
+```
+
+
+
+```{r}
+str(dt_merged)
+
+```
+
+
+
+```{r}
+# Exporter dt_merged en fichier CSV
+write.csv(dt_merged, "dt_merged_export.csv", row.names = FALSE)
+```
+
+```{r}
+gc()
+rm(list = ls())  # Supprime tous les objets en mémoire
+gc()  # Demande au système de récupérer la mémoire inutilisée
+
+```
+
+
+
+
+```{r}
+
+# Sélectionner uniquement les variables numériques et exclure MEMBER_ID, RETAILER, REWARDS_CATEGORY
+dt_pca <- dt_merged %>%
+  select(-c(MEMBER_ID, RETAILER, REWARDS_CATEGORY)) %>%  # Exclure les variables qualitatives
+  select_if(is.numeric)  # Ne garder que les variables numériques
+
+```
+
+```{r}
+# Vérifier les résultats 
+summary(dt_pca)
+```
+
+```{r}
+# Standardisation des données (centrage-réduction)
+dt_pca_scaled <- scale(dt_pca)
+
+```
+
+```{r}
+# Exporter le dataframe en fichier CSV
+write.csv(dt_pca, "dt_pca_exp.csv", row.names = FALSE)
+```
+
+
+```{r}
+
+# Vérifier les résultats après standardisation
+summary(dt_pca_scaled)
+```
+
+
+```{r}
+# Supprimer uniquement la table missing_values de la mémoire
+rm(missing_values)
+
+# Libérer la mémoire inutilisée
+gc()
+
+```
+
+```{r}
+dt_pca <- fread("dt_pca_exp.csv")
+```
+
+```{r}
+dt_merged <- fread("dt_merged.csv")
+```
+
+```{r}
+memory.limit()
+
+```
+
+```{r}
+install.packages("bigmemory")
+
+```
+```{r}
+library(bigmemory)
+
+```
+
+```{r}
+
+```
+
+
+
+
+
